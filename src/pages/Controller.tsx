@@ -1,76 +1,44 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import MotorToggle from "@/components/MotorToggle";
 import UnitSelector from "@/components/UnitSelector";
 import { useMotorContext } from "@/contexts/MotorContext";
-import { useUnitConversion } from "@/hooks/useUnitConversion";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RotateCw, RotateCcw, Save, Sliders } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const Controller = () => {
-  // 1. Ambil PID dan Direction dari Context (Global)
+  // 1. AMBIL SEMUA DARI CONTEXT (Termasuk Unit & Setter)
+  // Jangan pakai useUnitConversion di sini agar API terpanggil
   const { 
     isMotorOn, 
     handleMotorToggle, 
-    pid,       // Ambil nilai global
-    setPid,    // Ambil fungsi update global
-    direction, // Ambil nilai global
-    setDirection // Ambil fungsi update global
+    pid,       
+    setPid,    
+    direction, 
+    setDirection,
+    // Ambil Unit langsung dari Context
+    speedUnit, 
+    setSpeedUnit,
+    powerUnit,
+    setPowerUnit
   } = useMotorContext();
 
   const { user } = useAuth();
-  const { speedUnit, setSpeedUnit, powerUnit, setPowerUnit } = useUnitConversion();
-  
   const isOperator = user?.role === "operator";
 
-  // State lokal HANYA untuk loading UI spinner
-  const [loading, setLoading] = useState(false);
-
-  // Local state temporary untuk input PID agar tidak re-render setiap ketik
-  // Kita sync dengan global state pid saat pertama render
+  // 2. Local State untuk Input PID
   const [localPid, setLocalPid] = useState(pid);
 
-  const sendCommand = async (type: "SET_PID" | "SET_DIR", payload: any) => {
-    if (!isOperator) {
-      toast.error("Access Denied", { description: "Operator role required." });
-      return;
-    }
+  // 3. Sinkronisasi PID
+  useEffect(() => {
+    setLocalPid(pid);
+  }, [pid]);
 
-    setLoading(true);
-    const toastId = toast.loading("Sending config to HMI...");
-
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:3000";
-      
-      const response = await fetch(`${apiUrl}/api/control`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          action: type, 
-          ...payload 
-        }),
-      });
-
-      if (!response.ok) throw new Error("Failed to send command");
-
-      toast.success("Configuration Updated", { id: toastId });
-      
-      // Update GLOBAL Context agar tersimpan
-      if (type === "SET_DIR") {
-        setDirection(payload.value);
-      } else if (type === "SET_PID") {
-        setPid({ kp: payload.kp, ki: payload.ki, kd: payload.kd });
-      }
-
-    } catch (error) {
-      console.error(error);
-      toast.error("Connection Failed", { id: toastId });
-    } finally {
-      setLoading(false);
-    }
+  const handleApplyPid = () => {
+    if (!isOperator) return;
+    setPid(localPid); // Ini akan memanggil API -> Backend -> MQTT
   };
 
   return (
@@ -85,6 +53,8 @@ const Controller = () => {
         
         {/* KOLOM KIRI: MAIN CONTROL */}
         <div className="space-y-6">
+          
+          {/* MASTER SWITCH */}
           <div className="glass-card p-10 rounded-xl flex flex-col items-center justify-center min-h-[300px]">
             <h3 className="text-lg font-semibold mb-8 text-label">Master Switch</h3>
             <MotorToggle 
@@ -99,6 +69,7 @@ const Controller = () => {
             )}
           </div>
 
+          {/* DIRECTION CONTROL */}
           <div className="glass-card p-6 rounded-xl">
              <h3 className="text-md font-semibold mb-4 flex items-center gap-2">
                <RotateCw className="w-5 h-5 text-primary"/> Motor Direction
@@ -107,8 +78,8 @@ const Controller = () => {
                 <Button 
                   variant={direction === "FWD" ? "default" : "outline"}
                   className={cn("h-12 text-md", direction === "FWD" && "bg-success hover:bg-success/80 text-white")}
-                  onClick={() => sendCommand("SET_DIR", { value: "FWD" })}
-                  disabled={!isOperator || loading || isMotorOn} // Tambahkan isMotorOn di sini
+                  onClick={() => setDirection("FWD")}
+                  disabled={!isOperator || isMotorOn} 
                   title={isMotorOn ? "Stop motor to change direction" : ""}
                 >
                   <RotateCw className="mr-2 w-5 h-5" /> FORWARD
@@ -117,15 +88,16 @@ const Controller = () => {
                 <Button 
                   variant={direction === "REV" ? "default" : "outline"}
                   className={cn("h-12 text-md", direction === "REV" && "bg-warning hover:bg-warning/80 text-black")}
-                  onClick={() => sendCommand("SET_DIR", { value: "REV" })}
-                  disabled={!isOperator || loading || isMotorOn} // Tambahkan isMotorOn di sini
+                  onClick={() => setDirection("REV")}
+                  disabled={!isOperator || isMotorOn} 
                   title={isMotorOn ? "Stop motor to change direction" : ""}
                 >
                   <RotateCcw className="mr-2 w-5 h-5" /> REVERSE
                 </Button>
              </div>
+             
              {isMotorOn && (
-                <p className="text-xs text-muted-foreground mt-2 text-center">
+                <p className="text-xs text-muted-foreground mt-3 text-center animate-pulse text-warning">
                    ⚠️ Stop the motor to change direction.
                 </p>
              )}
@@ -134,6 +106,8 @@ const Controller = () => {
 
         {/* KOLOM KANAN: CONFIGURATION */}
         <div className="space-y-6">
+          
+          {/* PID PARAMETERS */}
           <div className="glass-card p-6 rounded-xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-md font-semibold flex items-center gap-2">
@@ -141,9 +115,8 @@ const Controller = () => {
               </h3>
               <Button 
                 size="sm" 
-                // Kirim nilai dari local input state
-                onClick={() => sendCommand("SET_PID", localPid)} 
-                disabled={!isOperator || loading}
+                onClick={handleApplyPid} 
+                disabled={!isOperator}
               >
                 <Save className="w-4 h-4 mr-2" /> Apply
               </Button>
@@ -181,22 +154,41 @@ const Controller = () => {
                 />
               </div>
             </div>
+            <p className="text-[10px] text-muted-foreground mt-3 text-right">
+              Changes are synced to HMI automatically.
+            </p>
           </div>
 
+          {/* DISPLAY UNITS */}
           <div className="glass-card p-6 rounded-xl">
              <h3 className="text-md font-semibold mb-4">Display Units</h3>
              <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <label className="text-xs uppercase text-muted-foreground">Speed</label>
-                  <UnitSelector type="speed" value={speedUnit} onChange={setSpeedUnit} />
+                  {/* Pastikan onChange memanggil setSpeedUnit dari Context */}
+                  <UnitSelector 
+                    type="speed" 
+                    value={speedUnit} 
+                    onChange={setSpeedUnit} 
+                    disabled={!isOperator}
+                  />
                 </div>
                 <div className="flex items-center justify-between">
                   <label className="text-xs uppercase text-muted-foreground">Power</label>
-                  <UnitSelector type="power" value={powerUnit} onChange={setPowerUnit} />
+                  <UnitSelector 
+                    type="power" 
+                    value={powerUnit} 
+                    onChange={setPowerUnit}
+                    disabled={!isOperator}
+                  />
                 </div>
              </div>
+             <p className="text-[10px] text-muted-foreground mt-3">
+               *Unit selection is synchronized across all operator screens.
+             </p>
           </div>
 
+          {/* SYSTEM STATUS */}
           <div className="glass-card p-6 rounded-xl">
              <h3 className="text-md font-semibold mb-4">System Status</h3>
              <div className="space-y-2 text-sm">
@@ -205,12 +197,11 @@ const Controller = () => {
                    <span className="text-success font-mono">ONLINE (MQTT)</span>
                 </div>
                 <div className="flex justify-between pt-1">
-                   <span className="text-muted-foreground">Direction</span>
+                   <span className="text-muted-foreground">Active Direction</span>
                    <span className={cn("font-mono font-bold", direction === "FWD" ? "text-success" : "text-warning")}>
                      {direction}
                    </span>
                 </div>
-                {/* Menampilkan nilai PID yang tersimpan di Context (Global) */}
                 <div className="flex justify-between pt-1">
                    <span className="text-muted-foreground">Active PID</span>
                    <span className="text-foreground font-mono text-xs">
