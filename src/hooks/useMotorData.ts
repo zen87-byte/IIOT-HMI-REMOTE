@@ -18,7 +18,7 @@ export interface MotorData {
   powerHistory: DataPoint[];
 }
 
-const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.85) => {
+const useMotorData = (isMotorOn: boolean, timeRange: TimeRange) => {
   const [data, setData] = useState<MotorData>({
     voltage: 0,
     current: 0,
@@ -30,147 +30,100 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
     powerHistory: [],
   });
 
-  const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
-  
+  // Buffer untuk menyimpan nilai terbaru dari tiap topik MQTT
+  const latestValues = useRef({
+    voltage: 0,
+    current: 0,
+    rpm: 0,
+    power: 0,
+  });
+
+  // Ref untuk status motor agar bisa diakses di dalam listener MQTT
   const isMotorOnRef = useRef(isMotorOn);
-  
   useEffect(() => {
     isMotorOnRef.current = isMotorOn;
   }, [isMotorOn]);
-
-  const formatTime = (dateInput: string | Date) => {
-    const date = new Date(dateInput);
-    if (timeRange === "live" || timeRange === "1h") {
-      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    }
-    if (timeRange === "6h" || timeRange === "24h") {
-      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-    }
-    return date.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-  };
 
   const fix3 = (num: number) => Number(num.toFixed(3));
 
   useEffect(() => {
     // ============================================
-    // MODE LIVE: HYBRID (API FETCH + MQTT)
+    // MODE LIVE (MQTT WebSocket)
     // ============================================
     if (timeRange === "live") {
       const wsUrl = import.meta.env.VITE_MQTT_WS_URL;
-      
       if (!wsUrl) return;
 
-      const fetchInitialLiveData = async () => {
-        try {
-          const res = await fetch(`/api/motor?range=1h`);
-          const historyData = await res.json();
-          
-          if (Array.isArray(historyData) && historyData.length > 0) {
-            const recentData = historyData.slice(-30);
-            
-            const vHist: DataPoint[] = [];
-            const cHist: DataPoint[] = [];
-            const rHist: DataPoint[] = [];
-            const pHist: DataPoint[] = [];
-            let lastVals = { v: 0, c: 0, r: 0, p: 0 };
-
-            recentData.forEach((row: any) => {
-              const t = formatTime(row.timestamp);
-              const rawP = Number(row.voltage) * Number(row.current) * powerFactor;
-              
-              const v = fix3(Number(row.voltage));
-              const c = fix3(Number(row.current));
-              const r = Math.round(Number(row.rpm));
-              const p = fix3(rawP);
-
-              vHist.push({ time: t, value: v });
-              cHist.push({ time: t, value: c });
-              rHist.push({ time: t, value: r });
-              pHist.push({ time: t, value: p });
-              lastVals = { v, c, r, p };
-            });
-
-            setData({
-              voltage: lastVals.v,
-              current: lastVals.c,
-              rpm: lastVals.r,
-              power: lastVals.p,
-              voltageHistory: vHist,
-              currentHistory: cHist,
-              rpmHistory: rHist,
-              powerHistory: pHist,
-            });
-          }
-        } catch (err) {
-          console.error("Gagal pre-fill live data:", err);
-        }
-      };
-
-      fetchInitialLiveData();
-
-      console.log("Connecting to MQTT WS:", wsUrl);
       const client = mqtt.connect(wsUrl, {
-        keepalive: 60,
-        clientId: 'hmi_' + Math.random().toString(16).substr(2, 8),
+        clientId: "frontend_sync_" + Math.random().toString(16).substring(2, 8),
         clean: true,
         reconnectPeriod: 2000,
       });
 
-      mqttClientRef.current = client;
-
       client.on("connect", () => {
-        console.log("✅ MQTT Connected");
-        client.subscribe("motor/data");
+        console.log("✅ MQTT Connected: Syncing 4 Topics");
+        client.subscribe(["pm/tegangan", "pm/arus", "vsd/actualspeed", "pm/power"]);
       });
 
       client.on("message", (topic, message) => {
-        if (!isMotorOnRef.current) return; 
+        // Jika motor mati di dashboard, kita abaikan pesan (opsional)
+        if (!isMotorOnRef.current) return;
 
         try {
           const payload = JSON.parse(message.toString());
-          const nowStr = formatTime(new Date());
-          const rawP = Number(payload.voltage) * Number(payload.current) * powerFactor;
+          
+          // Helper untuk handle format array dari HMI [220.5]
+          const parseVal = (val: any) => (Array.isArray(val) ? val[0] : val) || 0;
 
-          const v = fix3(Number(payload.voltage));
-          const c = fix3(Number(payload.current));
-          const r = Math.round(Number(payload.rpm));
-          const p = fix3(rawP);
+          // 1. Update Buffer (Ref tidak memicu re-render, jadi sangat ringan)
+          if (topic === "pm/tegangan") latestValues.current.voltage = parseVal(payload.tegangan);
+          if (topic === "pm/arus") latestValues.current.current = parseVal(payload.arus);
+          if (topic === "vsd/actualspeed") latestValues.current.rpm = parseVal(payload.rpm);
+          if (topic === "pm/power") {
+          latestValues.current.power = parseVal(payload.power) * 1000;
+        }
 
-          setData((prev) => {
-            const pushData = (arr: DataPoint[], val: number) => {
-               const newArr = [...arr, { time: nowStr, value: val }];
-               return newArr.length > 50 ? newArr.slice(1) : newArr;
-            };
-
-            return {
-              voltage: v,
-              current: c,
-              rpm: r,
-              power: p,
-              voltageHistory: pushData(prev.voltageHistory, v),
-              currentHistory: pushData(prev.currentHistory, c),
-              rpmHistory: pushData(prev.rpmHistory, r),
-              powerHistory: pushData(prev.powerHistory, p),
-            };
-          });
+          // 2. Update state digital (StatusCard) segera agar responsif saat angka berubah
+          setData((prev) => ({
+            ...prev,
+            voltage: latestValues.current.voltage,
+            current: latestValues.current.current,
+            rpm: latestValues.current.rpm,
+            power: latestValues.current.power,
+          }));
         } catch (err) {
           console.error("MQTT Parse Error:", err);
         }
       });
+
+      // 3. SINKRONISASI GRAFIK (Snapshot per 1 detik)
+      const syncInterval = setInterval(() => {
+        const nowStr = new Date().toLocaleTimeString("id-ID", { 
+          hour: "2-digit", minute: "2-digit", second: "2-digit" 
+        });
+
+        setData((prev) => ({
+          ...prev,
+          voltageHistory: [...prev.voltageHistory, { time: nowStr, value: latestValues.current.voltage }].slice(-30),
+          currentHistory: [...prev.currentHistory, { time: nowStr, value: latestValues.current.current }].slice(-30),
+          rpmHistory: [...prev.rpmHistory, { time: nowStr, value: latestValues.current.rpm }].slice(-30),
+          powerHistory: [...prev.powerHistory, { time: nowStr, value: latestValues.current.power }].slice(-30),
+        }));
+      }, 1000);
+
+      return () => {
+        client.end();
+        clearInterval(syncInterval);
+      };
     } 
     
     // ============================================
-    // MODE HISTORY
+    // MODE HISTORY (API Fetch)
     // ============================================
     else {
-      if (mqttClientRef.current) {
-        mqttClientRef.current.end();
-        mqttClientRef.current = null;
-      }
-
       const fetchHistory = async () => {
         try {
-          const res = await fetch(`/api/motor?range=${timeRange}`);
+          const res = await fetch(`${import.meta.env.VITE_API_URL}/api/motor?range=${timeRange}`);
           const historyData = await res.json();
           
           if (!Array.isArray(historyData)) return;
@@ -179,50 +132,34 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
           const cHist: DataPoint[] = [];
           const rHist: DataPoint[] = [];
           const pHist: DataPoint[] = [];
-          let lastVals = { v: 0, c: 0, r: 0, p: 0 };
 
           historyData.forEach((row: any) => {
-            const t = formatTime(row.timestamp);
-            const rawP = Number(row.voltage) * Number(row.current) * powerFactor;
-            
-            const v = fix3(Number(row.voltage));
-            const c = fix3(Number(row.current));
-            const r = Math.round(Number(row.rpm));
-            const p = fix3(rawP);
-
-            vHist.push({ time: t, value: v });
-            cHist.push({ time: t, value: c });
-            rHist.push({ time: t, value: r });
-            pHist.push({ time: t, value: p });
-            lastVals = { v, c, r, p };
+            const t = new Date(row.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+            vHist.push({ time: t, value: fix3(Number(row.voltage)) });
+            cHist.push({ time: t, value: fix3(Number(row.current)) });
+            rHist.push({ time: t, value: Math.round(Number(row.rpm)) });
+            pHist.push({ time: t, value: fix3(Number(row.power)) });
           });
 
-          setData({
-            voltage: lastVals.v,
-            current: lastVals.c,
-            rpm: lastVals.r,
-            power: lastVals.p,
+          setData((prev) => ({
+            ...prev,
             voltageHistory: vHist,
             currentHistory: cHist,
             rpmHistory: rHist,
             powerHistory: pHist,
-          });
+            // Nilai terakhir untuk card
+            voltage: vHist[vHist.length - 1]?.value || 0,
+            current: cHist[cHist.length - 1]?.value || 0,
+            rpm: rHist[rHist.length - 1]?.value || 0,
+            power: pHist[pHist.length - 1]?.value || 0,
+          }));
         } catch (err) {
           console.error("Fetch History Error:", err);
         }
       };
-
       fetchHistory();
     }
-
-    return () => {
-      if (mqttClientRef.current) {
-        mqttClientRef.current.end();
-        mqttClientRef.current = null;
-      }
-    };
-  // HAPUS isMotorOn dari dependency array, ganti logic pakai useRef
-  }, [timeRange, powerFactor]); 
+  }, [timeRange]);
 
   return data;
 };

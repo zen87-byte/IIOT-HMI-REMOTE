@@ -1,12 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { toast } from "sonner";
 import useMotorData, { MotorData } from "@/hooks/useMotorData";
 import { useAlarms, Alarm } from "@/hooks/useAlarms";
 import { TimeRange } from "@/components/TimeRangeSelector";
 import { useAuth } from "@/contexts/AuthContext";
-import mqtt from "mqtt"; // Import MQTT
+import mqtt from "mqtt";
 
-// ... (Tipe data tetap sama) ...
 export interface HistoryEntry {
   id: string;
   timestamp: string;
@@ -47,8 +46,9 @@ const MotorContext = createContext<MotorContextType | undefined>(undefined);
 export const MotorProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
   const isOperator = user?.role === "operator";
+  const apiUrl = import.meta.env.VITE_API_URL;
 
-  // State
+  // --- STATE INITIALIZATION ---
   const [isMotorOn, setIsMotorOn] = useState(() => {
     const saved = localStorage.getItem("motorStatus");
     return saved ? JSON.parse(saved) : false;
@@ -74,20 +74,19 @@ export const MotorProvider = ({ children }: { children: ReactNode }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>("live");
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
 
-  // --- LOGIC BARU: SYNCHRONIZATION VIA MQTT ---
+  // --- LOGIC: GLOBAL SYNCHRONIZATION VIA MQTT ---
   useEffect(() => {
     const wsUrl = import.meta.env.VITE_MQTT_WS_URL;
     if (!wsUrl) return;
 
-    console.log("[Context] Listening to Status changes...");
     const client = mqtt.connect(wsUrl, {
-      clientId: 'listener_' + Math.random().toString(16).substr(2, 8),
+      clientId: 'context_sync_' + Math.random().toString(16).substr(2, 8),
       clean: true,
       reconnectPeriod: 2000,
     });
 
     client.on("connect", () => {
-      // Kita dengarkan topik control untuk tahu kalau ada yg tekan tombol
+      console.log("Context MQTT: Connected for global sync");
       client.subscribe("motor/control");
     });
 
@@ -96,40 +95,81 @@ export const MotorProvider = ({ children }: { children: ReactNode }) => {
         try {
           const payload = JSON.parse(message.toString());
           
-          // 1. Sync START/STOP
+          // Sync Start/Stop
           if (payload.command === "START") {
             setIsMotorOn(true);
-            localStorage.setItem("motorStatus", JSON.stringify(true));
+            localStorage.setItem("motorStatus", "true");
           } else if (payload.command === "STOP") {
             setIsMotorOn(false);
-            localStorage.setItem("motorStatus", JSON.stringify(false));
+            localStorage.setItem("motorStatus", "false");
           }
           
-          // 2. Sync Direction (Biar tombol FWD/REV di laptop lain ikut berubah)
+          // Sync Direction
           if (payload.command === "SET_DIR" && payload.value) {
             setDirectionState(payload.value);
             localStorage.setItem("motorDirection", payload.value);
           }
 
-          // 3. Sync PID
+          // Sync PID
           if (payload.command === "SET_PID") {
              const newPid = { kp: payload.kp, ki: payload.ki, kd: payload.kd };
              setPidState(newPid);
              localStorage.setItem("motorPid", JSON.stringify(newPid));
           }
 
+          // Sync Display Units (Baru!)
+          if (payload.command === "SET_SPEED_UNIT") {
+            setSpeedUnitState(payload.value);
+            localStorage.setItem("speedUnit", payload.value);
+          }
+
+          if (payload.command === "SET_POWER_UNIT") {
+            setPowerUnitState(payload.value);
+            localStorage.setItem("powerUnit", payload.value);
+          }
+
         } catch (err) {
-          console.error("Sync Error:", err);
+          console.error("MQTT Sync Error in Context:", err);
         }
       }
     });
 
-    return () => {
-      client.end();
-    };
+    return () => { client.end(); };
   }, []);
-  // ---------------------------------------------
 
+  // --- HELPER: SEND COMMAND TO SERVER ---
+  const sendControl = async (action: string, extra = {}) => {
+    if (!isOperator) {
+      toast.error("Access Denied", { description: "Only operators can change settings" });
+      return;
+    }
+    try {
+      await fetch(`${apiUrl}/api/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...extra }),
+      });
+    } catch (error) {
+      console.error("Fetch error:", error);
+    }
+  };
+
+  // --- SETTERS: SEKARANG MEMANGGIL API (BUKAN STATE LOKAL LANGSUNG) ---
+  const handleMotorToggle = async (newState: boolean) => {
+    const command = newState ? "START" : "STOP";
+    toast.info(`Sending ${command} command...`);
+    await sendControl(command);
+  };
+
+  const setDirection = (dir: "FWD" | "REV") => sendControl("SET_DIR", { value: dir });
+  
+  const setPid = (newPid: PidConfig) => sendControl("SET_PID", { ...newPid });
+
+  const setSpeedUnit = (unit: SpeedUnit) => sendControl("SET_SPEED_UNIT", { value: unit });
+
+  const setPowerUnit = (unit: PowerUnit) => sendControl("SET_POWER_UNIT", { value: unit });
+
+  // --- DATA FETCHING & ALARMS ---
   const motorData = useMotorData(isMotorOn, timeRange);
   const { activeAlarms, thresholds } = useAlarms(
     motorData.current,
@@ -138,63 +178,12 @@ export const MotorProvider = ({ children }: { children: ReactNode }) => {
     isMotorOn
   );
 
-  // Setters
-  const setDirection = (dir: "FWD" | "REV") => {
-    // Optimistic Update (Update lokal dulu biar cepet)
-    setDirectionState(dir);
-    localStorage.setItem("motorDirection", dir);
-  };
-
-  const setPid = (newPid: PidConfig) => {
-    setPidState(newPid);
-    localStorage.setItem("motorPid", JSON.stringify(newPid));
-  };
-
-  const setSpeedUnit = (unit: SpeedUnit) => {
-    setSpeedUnitState(unit);
-    localStorage.setItem("speedUnit", unit);
-  };
-
-  const setPowerUnit = (unit: PowerUnit) => {
-    setPowerUnitState(unit);
-    localStorage.setItem("powerUnit", unit);
-  };
-
-  const handleMotorToggle = async (newState: boolean) => {
-    if (!isOperator) {
-      toast.error("Access Denied", { description: "Only operators can control the motor" });
-      return;
-    }
-
-    const command = newState ? "START" : "STOP";
-    const toastId = toast.loading(`Sending ${command} command...`);
-
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL;
-      
-      await fetch(`${apiUrl}/api/control`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: command }),
-      });
-
-      // KITA HAPUS setIsMotorOn() DARI SINI
-      // Biarkan useEffect MQTT yang mengupdate state setIsMotorOn
-      // Supaya konsisten: Data dikirim -> Backend Broadcast -> Semua Client Update
-      
-      toast.success(`Command Sent: ${command}`, { id: toastId });
-
-    } catch (error: any) {
-      console.error("Control Error:", error);
-      toast.error("Connection Failed", { id: toastId });
-    }
-  };
-
+  // History Log Logic
   useEffect(() => {
     if (activeAlarms.length > 0) {
       const newEntries = activeAlarms.map((alarm) => ({
         id: alarm.id,
-        timestamp: new Date().toLocaleString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        timestamp: new Date().toLocaleString("id-ID", { hour: "2-digit", minute: "2-digit" }),
         event: alarm.level === "critical" ? "critical" : "warning",
         description: alarm.message,
       })) as HistoryEntry[];
