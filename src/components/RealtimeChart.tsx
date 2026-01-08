@@ -1,0 +1,160 @@
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  TooltipProps,
+  ReferenceLine,
+} from "recharts";
+import { AlarmLevel } from "@/hooks/useAlarms";
+
+interface DataPoint {
+  time: string;
+  value: number;
+}
+
+interface RealtimeChartProps {
+  title: string;
+  data: DataPoint[];
+  unit: string;
+  color: string;
+  minValue?: number;
+  maxValue?: number;
+  warningThreshold?: { low?: number; high?: number };
+  criticalThreshold?: { low?: number; high?: number };
+  alarmLevel?: AlarmLevel;
+}
+
+const CustomTooltip = ({
+  active,
+  payload,
+  label,
+  unit,
+}: TooltipProps<number, string> & { unit: string }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-popover/95 backdrop-blur-sm border border-border rounded-lg p-3 shadow-xl">
+        <p className="text-xs text-muted-foreground mb-1">{label}</p>
+        <p className="font-mono text-lg font-semibold text-foreground">
+          {payload[0].value?.toFixed(2)} <span className="text-sm text-muted-foreground">{unit}</span>
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
+
+const RealtimeChart = ({
+  title,
+  data,
+  unit,
+  color,
+  minValue,
+  maxValue,
+  warningThreshold,
+  criticalThreshold,
+  alarmLevel = "normal",
+}: RealtimeChartProps) => {
+  const isWarning = alarmLevel === "warning";
+  const isCritical = alarmLevel === "critical";
+
+  return (
+    <div className="chart-container h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-foreground">{title}</h3>
+        <div className="flex items-center gap-2">
+          <span
+            className="w-3 h-3 rounded-full"
+            style={{ backgroundColor: isCritical ? "hsl(var(--destructive))" : isWarning ? "hsl(var(--warning))" : color }}
+          />
+          <span className="text-sm text-muted-foreground">{unit}</span>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-[200px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={data}
+            margin={{ top: 5, right: 10, left: -20, bottom: 5 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="hsl(var(--border))"
+              opacity={0.5}
+            />
+            <XAxis
+              dataKey="time"
+              stroke="hsl(var(--muted-foreground))"
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              stroke="hsl(var(--muted-foreground))"
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
+              domain={[minValue ?? "auto", maxValue ?? "auto"]}
+            />
+            <Tooltip content={<CustomTooltip unit={unit} />} />
+
+            {/* Warning threshold lines */}
+            {warningThreshold?.low && (
+              <ReferenceLine
+                y={warningThreshold.low}
+                stroke="hsl(var(--warning))"
+                strokeDasharray="5 5"
+                strokeWidth={1}
+              />
+            )}
+            {warningThreshold?.high && (
+              <ReferenceLine
+                y={warningThreshold.high}
+                stroke="hsl(var(--warning))"
+                strokeDasharray="5 5"
+                strokeWidth={1}
+              />
+            )}
+
+            {/* Critical threshold lines */}
+            {criticalThreshold?.low && (
+              <ReferenceLine
+                y={criticalThreshold.low}
+                stroke="hsl(var(--destructive))"
+                strokeDasharray="3 3"
+                strokeWidth={2}
+              />
+            )}
+            {criticalThreshold?.high && (
+              <ReferenceLine
+                y={criticalThreshold.high}
+                stroke="hsl(var(--destructive))"
+                strokeDasharray="3 3"
+                strokeWidth={2}
+              />
+            )}
+
+            <Line
+              type="monotone"
+              dataKey="value"
+              stroke={isCritical ? "hsl(var(--destructive))" : isWarning ? "hsl(var(--warning))" : color}
+              strokeWidth={2}
+              dot={false}
+              activeDot={{
+                r: 6,
+                fill: isCritical ? "hsl(var(--destructive))" : isWarning ? "hsl(var(--warning))" : color,
+                stroke: "hsl(var(--background))",
+                strokeWidth: 2,
+              }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
+
+export default RealtimeChart;
