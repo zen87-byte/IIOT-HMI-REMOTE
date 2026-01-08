@@ -1,74 +1,90 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
-export type UserRole = "viewer" | "operator";
-
-interface User {
-  id: string;
+// Sesuaikan tipe User dengan respon dari Backend (server.ts)
+export interface User {
+  id: number;
   username: string;
-  role: UserRole;
+  role: "viewer" | "operator";
+  name?: string;
 }
 
 interface AuthContextType {
   user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
-  isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Demo users for the IIoT class - NOT for production use
-const DEMO_USERS: Record<string, { password: string; role: UserRole }> = {
-  viewer: { password: "viewer123", role: "viewer" },
-  operator: { password: "operator123", role: "operator" },
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  // 1. Inisialisasi State dari LocalStorage agar tidak logout saat refresh
+  const [user, setUser] = useState<User | null>(() => {
+    const savedUser = localStorage.getItem("iiot_user");
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+  
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem("iiot_token");
+  });
 
-  useEffect(() => {
-    // Check for existing session
-    const stored = localStorage.getItem("iiot_user");
-    if (stored) {
-      try {
-        setUser(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem("iiot_user");
-      }
-    }
-  }, []);
-
+  // 2. Fungsi Login ke Backend
   const login = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    // Simulate network delay
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+      // Ambil URL Backend dari .env
+      const apiUrl = import.meta.env.VITE_API_URL; 
+      
+      // Debugging: Cek URL di Console Browser
+      console.log(`[Auth] Connecting to: ${apiUrl}/api/auth/login`);
 
-    const demoUser = DEMO_USERS[username.toLowerCase()];
-    if (!demoUser) {
-      return { success: false, error: "User not found" };
+      const response = await fetch(`${apiUrl}/api/auth/login`, {
+        method: "POST",
+        // --- KUNCI PERBAIKAN: Header JSON wajib ada ---
+        headers: {
+          "Content-Type": "application/json",
+        },
+        // ----------------------------------------------
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Login failed");
+      }
+
+      // 3. Jika Sukses: Simpan data ke State & LocalStorage
+      const loggedUser = data.user;
+      const loggedToken = data.token;
+
+      setUser(loggedUser);
+      setToken(loggedToken);
+
+      localStorage.setItem("iiot_user", JSON.stringify(loggedUser));
+      localStorage.setItem("iiot_token", loggedToken);
+
+      return { success: true };
+
+    } catch (error: any) {
+      console.error("[Auth] Login Error:", error);
+      // Jika error karena backend mati/IP salah
+      if (error.message.includes("Failed to fetch")) {
+        return { success: false, error: "Cannot connect to server. Check IP/Network." };
+      }
+      return { success: false, error: error.message };
     }
-
-    if (demoUser.password !== password) {
-      return { success: false, error: "Invalid password" };
-    }
-
-    const newUser: User = {
-      id: crypto.randomUUID(),
-      username: username.toLowerCase(),
-      role: demoUser.role,
-    };
-
-    setUser(newUser);
-    localStorage.setItem("iiot_user", JSON.stringify(newUser));
-    return { success: true };
   };
 
   const logout = () => {
     setUser(null);
+    setToken(null);
     localStorage.removeItem("iiot_user");
+    localStorage.removeItem("iiot_token");
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

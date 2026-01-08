@@ -114,7 +114,7 @@ const Dashboard = () => {
       <div className="flex-none flex items-center justify-between bg-card/50 px-4 py-2 rounded-lg border border-border/50">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-primary animate-pulse" />
-          <span className="text-sm font-semibold">KIT 2-C Motor AC</span>
+          <span className="text-sm font-semibold">KIT 2-C Motor</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
