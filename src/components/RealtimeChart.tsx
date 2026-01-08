@@ -85,20 +85,26 @@ const RealtimeChart = ({
               stroke="hsl(var(--border))"
               opacity={0.5}
             />
+            
             <XAxis
               dataKey="time"
               stroke="hsl(var(--muted-foreground))"
               fontSize={11}
               tickLine={false}
               axisLine={false}
+              minTickGap={30}
+              interval="preserveStartEnd"
             />
+            
             <YAxis
               stroke="hsl(var(--muted-foreground))"
               fontSize={11}
               tickLine={false}
               axisLine={false}
               domain={[minValue ?? "auto", maxValue ?? "auto"]}
+              width={40}
             />
+            
             <Tooltip content={<CustomTooltip unit={unit} />} />
 
             {/* Warning threshold lines */}
@@ -143,6 +149,7 @@ const RealtimeChart = ({
               stroke={isCritical ? "hsl(var(--destructive))" : isWarning ? "hsl(var(--warning))" : color}
               strokeWidth={2}
               dot={false}
+              isAnimationActive={false}
               activeDot={{
                 r: 6,
                 fill: isCritical ? "hsl(var(--destructive))" : isWarning ? "hsl(var(--warning))" : color,

@@ -30,43 +30,88 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
     powerHistory: [],
   });
 
-  // Ref untuk menyimpan koneksi MQTT
   const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
+  
+  const isMotorOnRef = useRef(isMotorOn);
+  
+  useEffect(() => {
+    isMotorOnRef.current = isMotorOn;
+  }, [isMotorOn]);
 
-  // Helper 1: Format Jam (HH:mm:ss)
   const formatTime = (dateInput: string | Date) => {
     const date = new Date(dateInput);
-    return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (timeRange === "live" || timeRange === "1h") {
+      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    if (timeRange === "6h" || timeRange === "24h") {
+      return date.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    }
+    return date.toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
   };
 
-  // Helper 2: Pembulatan 3 angka belakang koma (tetap jadi Number)
   const fix3 = (num: number) => Number(num.toFixed(3));
 
   useEffect(() => {
     // ============================================
-    // MODE LIVE: KONEK VIA MQTT WEBSOCKET
+    // MODE LIVE: HYBRID (API FETCH + MQTT)
     // ============================================
     if (timeRange === "live") {
+      const wsUrl = import.meta.env.VITE_MQTT_WS_URL;
       
-      // [PENTING] Syntax Vite untuk ambil variabel .env
-      const wsUrl = import.meta.env.VITE_MQTT_WS_URL; 
-      
-      if (!wsUrl) {
-        console.error("VITE_MQTT_WS_URL not found in .env");
-        return;
-      }
+      if (!wsUrl) return;
 
-      // Reset history saat masuk mode live
-      setData(prev => ({
-        ...prev,
-        voltageHistory: [], currentHistory: [], rpmHistory: [], powerHistory: []
-      }));
+      const fetchInitialLiveData = async () => {
+        try {
+          const res = await fetch(`/api/motor?range=1h`);
+          const historyData = await res.json();
+          
+          if (Array.isArray(historyData) && historyData.length > 0) {
+            const recentData = historyData.slice(-30);
+            
+            const vHist: DataPoint[] = [];
+            const cHist: DataPoint[] = [];
+            const rHist: DataPoint[] = [];
+            const pHist: DataPoint[] = [];
+            let lastVals = { v: 0, c: 0, r: 0, p: 0 };
+
+            recentData.forEach((row: any) => {
+              const t = formatTime(row.timestamp);
+              const rawP = Number(row.voltage) * Number(row.current) * powerFactor;
+              
+              const v = fix3(Number(row.voltage));
+              const c = fix3(Number(row.current));
+              const r = Math.round(Number(row.rpm));
+              const p = fix3(rawP);
+
+              vHist.push({ time: t, value: v });
+              cHist.push({ time: t, value: c });
+              rHist.push({ time: t, value: r });
+              pHist.push({ time: t, value: p });
+              lastVals = { v, c, r, p };
+            });
+
+            setData({
+              voltage: lastVals.v,
+              current: lastVals.c,
+              rpm: lastVals.r,
+              power: lastVals.p,
+              voltageHistory: vHist,
+              currentHistory: cHist,
+              rpmHistory: rHist,
+              powerHistory: pHist,
+            });
+          }
+        } catch (err) {
+          console.error("Gagal pre-fill live data:", err);
+        }
+      };
+
+      fetchInitialLiveData();
 
       console.log("Connecting to MQTT WS:", wsUrl);
-      
       const client = mqtt.connect(wsUrl, {
         keepalive: 60,
-        clientId: 'hmi_client_' + Math.random().toString(16).substr(2, 8),
+        clientId: 'hmi_' + Math.random().toString(16).substr(2, 8),
         clean: true,
         reconnectPeriod: 2000,
       });
@@ -74,35 +119,27 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
       mqttClientRef.current = client;
 
       client.on("connect", () => {
-        console.log("✅ MQTT WebSocket Connected!");
+        console.log("✅ MQTT Connected");
         client.subscribe("motor/data");
       });
 
-      client.on("error", (err) => {
-        console.error("❌ MQTT Connection Error:", err);
-      });
-
       client.on("message", (topic, message) => {
-        if (!isMotorOn) return; 
+        if (!isMotorOnRef.current) return; 
 
         try {
           const payload = JSON.parse(message.toString());
           const nowStr = formatTime(new Date());
-          
-          // Hitung Power Raw
-          const rawPower = Number(payload.voltage) * Number(payload.current) * powerFactor;
+          const rawP = Number(payload.voltage) * Number(payload.current) * powerFactor;
 
-          // Siapkan data yang sudah dibulatkan
           const v = fix3(Number(payload.voltage));
           const c = fix3(Number(payload.current));
-          const r = Math.round(Number(payload.rpm)); // RPM bulat integer
-          const p = fix3(rawPower);
+          const r = Math.round(Number(payload.rpm));
+          const p = fix3(rawP);
 
           setData((prev) => {
-            // Helper push data (Max 30 items sliding window)
             const pushData = (arr: DataPoint[], val: number) => {
                const newArr = [...arr, { time: nowStr, value: val }];
-               return newArr.length > 30 ? newArr.slice(1) : newArr;
+               return newArr.length > 50 ? newArr.slice(1) : newArr;
             };
 
             return {
@@ -117,25 +154,22 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
             };
           });
         } catch (err) {
-          console.error("Error parsing MQTT msg:", err);
+          console.error("MQTT Parse Error:", err);
         }
       });
     } 
     
     // ============================================
-    // MODE HISTORY: FETCH DATABASE API
+    // MODE HISTORY
     // ============================================
     else {
-      // Matikan MQTT jika sebelumnya nyala
       if (mqttClientRef.current) {
-        console.log("Stopping MQTT for History Mode...");
         mqttClientRef.current.end();
         mqttClientRef.current = null;
       }
 
       const fetchHistory = async () => {
         try {
-          // Fetch ke API (pastikan proxy di vite.config.ts sudah benar)
           const res = await fetch(`/api/motor?range=${timeRange}`);
           const historyData = await res.json();
           
@@ -145,24 +179,21 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
           const cHist: DataPoint[] = [];
           const rHist: DataPoint[] = [];
           const pHist: DataPoint[] = [];
-          
           let lastVals = { v: 0, c: 0, r: 0, p: 0 };
 
           historyData.forEach((row: any) => {
-            const t = formatTime(row.timestamp); 
-            const rawPower = Number(row.voltage) * Number(row.current) * powerFactor;
+            const t = formatTime(row.timestamp);
+            const rawP = Number(row.voltage) * Number(row.current) * powerFactor;
             
-            // Bulatkan data history juga
             const v = fix3(Number(row.voltage));
             const c = fix3(Number(row.current));
             const r = Math.round(Number(row.rpm));
-            const p = fix3(rawPower);
+            const p = fix3(rawP);
 
             vHist.push({ time: t, value: v });
             cHist.push({ time: t, value: c });
             rHist.push({ time: t, value: r });
             pHist.push({ time: t, value: p });
-            
             lastVals = { v, c, r, p };
           });
 
@@ -176,23 +207,22 @@ const useMotorData = (isMotorOn: boolean, timeRange: TimeRange, powerFactor = 0.
             rpmHistory: rHist,
             powerHistory: pHist,
           });
-
         } catch (err) {
-          console.error("Failed to fetch history:", err);
+          console.error("Fetch History Error:", err);
         }
       };
 
       fetchHistory();
     }
 
-    // Cleanup saat unmount atau ganti mode
     return () => {
       if (mqttClientRef.current) {
         mqttClientRef.current.end();
         mqttClientRef.current = null;
       }
     };
-  }, [timeRange, isMotorOn, powerFactor]);
+  // HAPUS isMotorOn dari dependency array, ganti logic pakai useRef
+  }, [timeRange, powerFactor]); 
 
   return data;
 };
