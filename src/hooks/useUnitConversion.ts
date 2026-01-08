@@ -1,86 +1,63 @@
-import { useState, useMemo } from "react";
+import { useMotorContext } from "@/contexts/MotorContext";
 
-export type SpeedUnit = "rpm" | "hz" | "rads";
-export type PowerUnit = "W" | "kW" | "HP";
+export const useUnitConversion = () => {
+  const { speedUnit, setSpeedUnit, powerUnit, setPowerUnit } = useMotorContext();
 
-interface UnitConversion {
-  speedUnit: SpeedUnit;
-  setSpeedUnit: (unit: SpeedUnit) => void;
-  convertSpeed: (rpm: number) => number;
-  getSpeedUnitLabel: () => string;
-  powerUnit: PowerUnit;
-  setPowerUnit: (unit: PowerUnit) => void;
-  convertPower: (watts: number) => number;
-  getPowerUnitLabel: () => string;
-  calculatePower: (voltage: number, current: number, powerFactor?: number) => number;
-}
+  // 1. Konversi Speed (RPM <-> Hz <-> rad/s)
+  const convertSpeed = (rpm: number) => {
+    // Pastikan rpm angka valid
+    const val = Number(rpm) || 0;
 
-export function useUnitConversion(): UnitConversion {
-  const [speedUnit, setSpeedUnit] = useState<SpeedUnit>("rpm");
-  const [powerUnit, setPowerUnit] = useState<PowerUnit>("W");
-
-  const convertSpeed = useMemo(() => {
-    return (rpm: number): number => {
-      switch (speedUnit) {
-        case "hz":
-          // RPM to Hz: divide by 60
-          return Number((rpm / 60).toFixed(2));
-        case "rads":
-          // RPM to rad/s: multiply by 2π/60
-          return Number(((rpm * 2 * Math.PI) / 60).toFixed(2));
-        case "rpm":
-        default:
-          return rpm;
-      }
-    };
-  }, [speedUnit]);
-
-  const getSpeedUnitLabel = (): string => {
-    switch (speedUnit) {
-      case "hz":
-        return "Hz";
-      case "rads":
-        return "rad/s";
-      case "rpm":
-      default:
-        return "RPM";
+    if (speedUnit === "hz") {
+      // Rumus: (RPM * Poles) / 120. Asumsi 4 Pole: RPM / 30
+      return val / 30;
     }
+    if (speedUnit === "rad/s") {
+      // Rumus: RPM * (2 * PI / 60) -> approx 0.10472
+      return val * 0.10472;
+    }
+    // Default RPM
+    return val;
   };
 
-  const convertPower = useMemo(() => {
-    return (watts: number): number => {
-      switch (powerUnit) {
-        case "kW":
-          return Number((watts / 1000).toFixed(3));
-        case "HP":
-          // 1 HP = 745.7 watts
-          return Number((watts / 745.7).toFixed(3));
-        case "W":
-        default:
-          return Number(watts.toFixed(1));
-      }
-    };
-  }, [powerUnit]);
-
-  const getPowerUnitLabel = (): string => {
-    return powerUnit;
+  const getSpeedUnitLabel = () => {
+    if (speedUnit === "hz") return "Hz";
+    if (speedUnit === "rad/s") return "rad/s";
+    return "RPM";
   };
 
-  // Calculate apparent power (VA) or real power with power factor
-  const calculatePower = (voltage: number, current: number, powerFactor = 0.85): number => {
-    // P = V × I × PF (for single-phase AC)
-    return Number((voltage * current * powerFactor).toFixed(1));
+  // 2. Hitung Power Base (Watt)
+  const calculatePower = (voltage: number, current: number) => {
+    const pf = 0.85; 
+    const root3 = 1.732; 
+    return voltage * current * root3 * pf; // Result in Watts
+  };
+
+  // 3. Konversi Power (Watt <-> kW <-> HP)
+  const convertPower = (watts: number) => {
+    const val = Number(watts) || 0;
+    
+    if (powerUnit === "kw") return val / 1000;
+    if (powerUnit === "hp") return val / 745.7; // 1 HP = 745.7 Watt
+    
+    return val; // Default Watt
+  };
+
+  const getPowerUnitLabel = () => {
+    if (powerUnit === "kw") return "kW";
+    if (powerUnit === "hp") return "HP";
+    return "W";
   };
 
   return {
     speedUnit,
     setSpeedUnit,
-    convertSpeed,
-    getSpeedUnitLabel,
     powerUnit,
     setPowerUnit,
+    convertSpeed,
+    getSpeedUnitLabel,
+    calculatePower,
     convertPower,
     getPowerUnitLabel,
-    calculatePower,
   };
-}
+};

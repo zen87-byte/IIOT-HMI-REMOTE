@@ -22,9 +22,9 @@ const speedUnits: { value: SpeedUnit; label: string }[] = [
 ];
 
 const powerUnits: { value: PowerUnit; label: string }[] = [
-  { value: "W", label: "W" },
-  { value: "kW", label: "kW" },
-  { value: "HP", label: "HP" },
+  { value: "w", label: "W" },
+  { value: "kw", label: "kW" },
+  { value: "hp", label: "HP" },
 ];
 
 const UnitSelector = (props: UnitSelectorProps) => {
@@ -43,7 +43,7 @@ const UnitSelector = (props: UnitSelectorProps) => {
             value === unit.value
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:text-foreground"
-          )}
+          )}a
           aria-pressed={value === unit.value}
         >
           {unit.label}

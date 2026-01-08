@@ -7,7 +7,7 @@ interface DataPoint {
   value: number;
 }
 
-interface MotorData {
+export interface MotorData {
   voltage: number;
   current: number;
   rpm: number;
