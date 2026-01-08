@@ -61,6 +61,12 @@ const RealtimeChart = ({
   const isWarning = alarmLevel === "warning";
   const isCritical = alarmLevel === "critical";
 
+  // Helper untuk membulatkan angka sumbu Y agar tidak kepanjangan
+  const formatYAxis = (val: number) => {
+    if (val >= 1000) return `${(val / 1000).toFixed(1)}k`; // Cth: 1.5k
+    return val.toFixed(0); // Cth: 220 (tanpa desimal)
+  };
+
   return (
     <div className="chart-container h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
@@ -78,7 +84,7 @@ const RealtimeChart = ({
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={data}
-            margin={{ top: 5, right: 10, left: -20, bottom: 5 }}
+            margin={{ top: 5, right: 10, left: -10, bottom: 5 }} // Left margin dikurangi/negatif biar mepet kiri
           >
             <CartesianGrid
               strokeDasharray="3 3"
@@ -96,52 +102,29 @@ const RealtimeChart = ({
               interval="preserveStartEnd"
             />
             
+            {/* PERBAIKAN SUMBU Y */}
             <YAxis
               stroke="hsl(var(--muted-foreground))"
               fontSize={11}
               tickLine={false}
               axisLine={false}
-              domain={[minValue ?? "auto", maxValue ?? "auto"]}
-              width={40}
+              // Gunakan 'auto' jika props min/max tidak ada, atau angka fix jika ada.
+              // Tips: Jangan gunakan minValue yang ketat (seperti 200) jika data bisa 0 (saat mati)
+              domain={[
+                minValue ?? 'auto', 
+                maxValue ?? 'auto'
+              ]}
+              width={50} // Diperlebar dari 40 ke 50 agar angka 4 digit (RPM) muat
+              tickFormatter={formatYAxis} // Format angka biar rapi
             />
             
             <Tooltip content={<CustomTooltip unit={unit} />} />
 
-            {/* Warning threshold lines */}
-            {warningThreshold?.low && (
-              <ReferenceLine
-                y={warningThreshold.low}
-                stroke="hsl(var(--warning))"
-                strokeDasharray="5 5"
-                strokeWidth={1}
-              />
-            )}
-            {warningThreshold?.high && (
-              <ReferenceLine
-                y={warningThreshold.high}
-                stroke="hsl(var(--warning))"
-                strokeDasharray="5 5"
-                strokeWidth={1}
-              />
-            )}
-
-            {/* Critical threshold lines */}
-            {criticalThreshold?.low && (
-              <ReferenceLine
-                y={criticalThreshold.low}
-                stroke="hsl(var(--destructive))"
-                strokeDasharray="3 3"
-                strokeWidth={2}
-              />
-            )}
-            {criticalThreshold?.high && (
-              <ReferenceLine
-                y={criticalThreshold.high}
-                stroke="hsl(var(--destructive))"
-                strokeDasharray="3 3"
-                strokeWidth={2}
-              />
-            )}
+            {/* Threshold Lines (Warning & Critical) */}
+            {warningThreshold?.low && <ReferenceLine y={warningThreshold.low} stroke="hsl(var(--warning))" strokeDasharray="5 5" strokeWidth={1} />}
+            {warningThreshold?.high && <ReferenceLine y={warningThreshold.high} stroke="hsl(var(--warning))" strokeDasharray="5 5" strokeWidth={1} />}
+            {criticalThreshold?.low && <ReferenceLine y={criticalThreshold.low} stroke="hsl(var(--destructive))" strokeDasharray="3 3" strokeWidth={2} />}
+            {criticalThreshold?.high && <ReferenceLine y={criticalThreshold.high} stroke="hsl(var(--destructive))" strokeDasharray="3 3" strokeWidth={2} />}
 
             <Line
               type="monotone"

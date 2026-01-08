@@ -5,11 +5,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import MotorToggle from "@/components/MotorToggle";
 import StatusCard from "@/components/StatusCard";
 import RealtimeChart from "@/components/RealtimeChart";
-// IMPORT TYPE DARI SINI
 import TimeRangeSelector, { TimeRange } from "@/components/TimeRangeSelector";
 import UsageHistory from "@/components/UsageHistory";
 import UnitSelector from "@/components/UnitSelector";
-import AlarmBanner from "@/components/AlarmBanner";
 import useMotorData from "@/hooks/useMotorData";
 import { useAlarms, Alarm } from "@/hooks/useAlarms";
 import { useUnitConversion } from "@/hooks/useUnitConversion";
@@ -17,6 +15,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
+// --- Types ---
 interface HistoryEntry {
   id: string;
   timestamp: string;
@@ -26,11 +25,11 @@ interface HistoryEntry {
 }
 
 const Index = () => {
+  // --- Hooks & State ---
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [isMotorOn, setIsMotorOn] = useState(false);
   
-  // 1. UBAH DEFAULT JADI "live"
+  const [isMotorOn, setIsMotorOn] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRange>("live");
 
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([
@@ -49,17 +48,28 @@ const Index = () => {
     },
   ]);
 
-  // 2. PASSING timeRange KE DALAM HOOK
-  // Ini yang bikin switch antara MQTT (Live) dan API (History) jalan
+  // Fetch Data (MQTT for Live / API for History)
   const motorData = useMotorData(isMotorOn, timeRange);
 
-  const { currentLevel, activeAlarms, thresholds, isInSteadyState } = useAlarms(
+  // Alarm Logic
+  const { thresholds } = useAlarms(
     motorData.current,
     motorData.rpm,
     motorData.voltage,
     isMotorOn
   );
   
+  // Perhitungan Alarm Aktif untuk History Log
+  // Kita panggil hook lagi atau gunakan value dari hook di atas jika sudah di-return
+  // Asumsi: useAlarms mengembalikan activeAlarms
+  const { activeAlarms } = useAlarms(
+    motorData.current, 
+    motorData.rpm, 
+    motorData.voltage, 
+    isMotorOn
+  );
+
+  // Unit Conversion
   const {
     speedUnit, setSpeedUnit, convertSpeed, getSpeedUnitLabel,
     powerUnit, setPowerUnit, convertPower, getPowerUnitLabel,
@@ -70,7 +80,9 @@ const Index = () => {
   const powerWatts = calculatePower(motorData.voltage, motorData.current);
   const displayPower = isMotorOn ? convertPower(powerWatts) : 0;
 
-  // Log alarms to history
+  // --- Effects ---
+
+  // Handle Alarm Logging with Debouncing/Anti-Flood
   useEffect(() => {
     if (activeAlarms.length > 0) {
       const newEntries: HistoryEntry[] = activeAlarms.map((alarm: Alarm) => ({
@@ -85,21 +97,36 @@ const Index = () => {
       }));
 
       setHistoryEntries((prev) => {
-        const existingIds = new Set(prev.map((e) => e.id));
-        const filtered = newEntries.filter((e) => !existingIds.has(e.id));
-        return [...filtered, ...prev].slice(0, 50);
+        const lastEntry = prev[0];
+
+        // Filter: Hanya terima entry baru jika BERBEDA dengan entry terakhir
+        // Mencegah spam log jika error yang sama muncul terus menerus
+        const uniqueNewEntries = newEntries.filter(newEntry => {
+          if (!lastEntry) return true;
+          if (newEntry.description === lastEntry.description && newEntry.event === lastEntry.event) {
+            return false;
+          }
+          return true;
+        });
+
+        if (uniqueNewEntries.length === 0) return prev;
+
+        // Simpan 100 history terakhir
+        return [...uniqueNewEntries, ...prev].slice(0, 100); 
       });
 
-      // Show toast for new alarms
+      // Toast notification tetap muncul untuk feedback visual langsung
       activeAlarms.forEach((alarm: Alarm) => {
         if (alarm.level === "critical") {
-          toast.error(alarm.message, { duration: 5000 });
+          toast.error(alarm.message);
         } else {
-          toast.warning(alarm.message, { duration: 3000 });
+          toast.warning(alarm.message);
         }
       });
     }
   }, [activeAlarms]);
+
+  // --- Handlers ---
 
   const handleMotorToggle = (newState: boolean) => {
     if (!isOperator) {
@@ -121,7 +148,8 @@ const Index = () => {
       event: newState ? "start" : "stop",
       description: newState ? "Motor started - Operator initiated" : "Motor stopped - Operator initiated",
     };
-    setHistoryEntries((prev) => [entry, ...prev].slice(0, 50));
+    
+    setHistoryEntries((prev) => [entry, ...prev].slice(0, 100));
 
     toast(newState ? "Motor Started" : "Motor Stopped", {
       description: newState
@@ -135,7 +163,7 @@ const Index = () => {
     navigate("/login");
   };
 
-  // Get alarm level for specific parameters
+  // Helper: Determine alarm status per card
   const getCurrentAlarmLevel = () => {
     if (!isMotorOn) return "normal";
     if (motorData.current >= thresholds.current.critical) return "critical";
@@ -161,9 +189,9 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Toaster position="top-right" />
 
-      {/* Header */}
+      {/* Header - Full Width */}
       <header className="border-b border-border bg-card sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
+        <div className="w-full px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-primary/10">
@@ -186,24 +214,13 @@ const Index = () => {
                   {user?.role}
                 </span>
               </div>
-              <button
-                className="p-2 rounded-lg hover:bg-secondary transition-colors"
-                aria-label="Notifications"
-              >
+              <button className="p-2 rounded-lg hover:bg-secondary transition-colors" aria-label="Notifications">
                 <Bell className="w-5 h-5 text-muted-foreground" />
               </button>
-              <button
-                className="p-2 rounded-lg hover:bg-secondary transition-colors"
-                aria-label="Settings"
-              >
+              <button className="p-2 rounded-lg hover:bg-secondary transition-colors" aria-label="Settings">
                 <Settings className="w-5 h-5 text-muted-foreground" />
               </button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLogout}
-                className="gap-2"
-              >
+              <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-2">
                 <LogOut className="w-4 h-4" />
                 <span className="hidden sm:inline">Logout</span>
               </Button>
@@ -212,15 +229,14 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
-        {/* Alarm Banner */}
-        {/* <AlarmBanner level={currentLevel} activeAlarms={activeAlarms} /> */}
-
+      {/* Main Content - Full Width */}
+      <main className="w-full px-6 py-6">
+        
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
           {/* Left Column - Motor Control */}
           <div className="lg:col-span-3">
-            <div className="glass-card rounded-lg p-6 flex flex-col items-center">
+            <div className="glass-card rounded-lg p-6 flex flex-col items-center sticky top-24">
               <h2 className="text-lg font-semibold mb-2 text-center">
                 Motor Control
               </h2>
@@ -238,44 +254,41 @@ const Index = () => {
               <div className="mt-6 w-full pt-6 border-t border-border">
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div>
-                    <p className="label-text text-xs">
-                      Uptime
-                    </p>
+                    <p className="label-text text-xs">Uptime</p>
                     <p className="font-mono text-lg mt-1">
                       {isMotorOn ? "00:12:34" : "--:--:--"}
                     </p>
                   </div>
                   <div>
-                    <p className="label-text text-xs">
-                      Cycles
-                    </p>
+                    <p className="label-text text-xs">Cycles</p>
                     <p className="font-mono text-lg mt-1">1,247</p>
                   </div>
                 </div>
               </div>
 
-              {/* Speed Unit Selector */}
-              <div className="mt-6 w-full pt-6 border-t border-border">
-                <p className="label-text text-xs text-center mb-3">Speed Display Unit</p>
-                <div className="flex justify-center">
-                  <UnitSelector type="speed" value={speedUnit} onChange={setSpeedUnit} />
+              {/* Units Selection */}
+              <div className="mt-6 w-full pt-6 border-t border-border space-y-4">
+                <div>
+                  <p className="label-text text-xs text-center mb-2">Speed Unit</p>
+                  <div className="flex justify-center">
+                    <UnitSelector type="speed" value={speedUnit} onChange={setSpeedUnit} />
+                  </div>
                 </div>
-              </div>
-
-              {/* Power Unit Selector */}
-              <div className="mt-4 w-full pt-4 border-t border-border">
-                <p className="label-text text-xs text-center mb-3">Power Display Unit</p>
-                <div className="flex justify-center">
-                  <UnitSelector type="power" value={powerUnit} onChange={setPowerUnit} />
+                <div>
+                  <p className="label-text text-xs text-center mb-2">Power Unit</p>
+                  <div className="flex justify-center">
+                    <UnitSelector type="power" value={powerUnit} onChange={setPowerUnit} />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Center Column - Stats & Charts */}
-          <div className="lg:col-span-6 space-y-6 text-xs">
-            {/* Status Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+          <div className="lg:col-span-6 space-y-6">
+            
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <StatusCard
                 title="Voltage"
                 value={motorData.voltage}
@@ -317,20 +330,19 @@ const Index = () => {
               />
             </div>
 
-            {/* Time Range Selector */}
-            <div className="flex items-center justify-between">
-              {/* UBAH TITLE BIAR SESUAI MODE */}
-              <h2 className="text-lg font-semibold">
-                {timeRange === "live" ? "Real-time Monitoring" : "Historical Data"}
+            {/* Time Range & Charts Title */}
+            <div className="flex items-center justify-between bg-card/50 p-2 rounded-lg border border-border/50">
+              <h2 className="text-sm font-semibold px-2">
+                {timeRange === "live" ? "Real-time Monitoring" : "Historical Data Analysis"}
               </h2>
               <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
             </div>
 
-            {/* Charts Grid - Aligned 2x2 layout */}
+            {/* Charts Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="glass-card rounded-lg p-4 h-[320px]">
                 <RealtimeChart
-                  title="Voltage"
+                  title="Voltage Trend"
                   data={motorData.voltageHistory}
                   unit="V"
                   color="hsl(var(--chart-voltage))"
@@ -343,7 +355,7 @@ const Index = () => {
               </div>
               <div className="glass-card rounded-lg p-4 h-[320px]">
                 <RealtimeChart
-                  title="Electric Current"
+                  title="Current Load"
                   data={motorData.currentHistory}
                   unit="A"
                   color="hsl(var(--chart-current))"
@@ -369,7 +381,7 @@ const Index = () => {
               </div>
               <div className="glass-card rounded-lg p-4 h-[320px]">
                 <RealtimeChart
-                  title="Power Consumption"
+                  title="Power Usage"
                   data={motorData.powerHistory.map(p => ({
                     time: p.time,
                     value: convertPower(p.value)
@@ -383,16 +395,20 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Right Column - History */}
+          {/* Right Column - History - Full Height */}
           <div className="lg:col-span-3">
-            <UsageHistory entries={historyEntries} />
+             {/* Tambahkan sticky agar history tetap terlihat saat scroll */}
+             <div className="sticky top-24 h-[calc(100vh-8rem)]">
+                <UsageHistory entries={historyEntries} />
+             </div>
           </div>
+
         </div>
       </main>
 
-      {/* Footer */}
+      {/* Footer - Full Width */}
       <footer className="border-t border-border mt-8 py-4">
-        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
+        <div className="w-full px-6 text-center text-sm text-muted-foreground">
           <p>IIoT Motor Control System • Industrial Internet of Things Lab</p>
         </div>
       </footer>

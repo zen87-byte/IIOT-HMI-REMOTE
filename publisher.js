@@ -5,7 +5,7 @@ setInterval(() => {
   const data = {
     rpm: 1625 + Math.random() * 200,
     voltage: 220 + Math.random() * 10,
-    current: 2 + Math.random(),
+    current: 15 + Math.random(),
     temperature: 40 + Math.random() * 5
   };
 
