@@ -129,7 +129,8 @@ const Dashboard = () => {
               data={motorData.voltageHistory}
               unit="V"
               color="hsl(var(--chart-voltage))"
-              minValue={215} maxValue={225}
+              minValue={215} maxValue={230}
+              criticalThreshold={{high: 230}}
               alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')}
             />
           </div>
@@ -140,7 +141,7 @@ const Dashboard = () => {
               data={motorData.currentHistory}
               unit="A"
               color="hsl(var(--chart-current))"
-              minValue={0} maxValue={1}
+              minValue={0} maxValue={2.5} criticalThreshold={{high: 2}}
               alarmLevel={getAlarmLevel(motorData.current, 'current')}
             />
           </div>
@@ -151,7 +152,7 @@ const Dashboard = () => {
               data={motorData.rpmHistory.map(r => ({ time: r.time, value: convertSpeed(r.value) }))}
               unit={getSpeedUnitLabel()}
               color="hsl(var(--chart-rpm))"
-              minValue={0}
+              minValue={0} criticalThreshold={{high: 20}} maxValue={25}
               alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')}
             />
           </div>
