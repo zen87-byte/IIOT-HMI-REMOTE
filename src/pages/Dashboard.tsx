@@ -10,7 +10,7 @@ const Dashboard = () => {
   const { isMotorOn, motorData, thresholds, activeAlarms } = useMotorContext();
   
   // Ambil helper konversi unit
-  const { convertSpeed, getSpeedUnitLabel, convertPower, getPowerUnitLabel, calculatePower } = useUnitConversion();
+  const { convertSpeed, getSpeedUnitLabel, convertPower, getPowerUnitLabel } = useUnitConversion();
 
   // 1. SAFETY CHECK: Cegah Blank Screen jika data belum siap
   if (!motorData || !motorData.voltageHistory) {
@@ -24,9 +24,9 @@ const Dashboard = () => {
     );
   }
 
-  // 2. Hitung Power (Watt/kW/HP) secara real-time
-  const powerWatts = calculatePower(motorData.voltage, motorData.current);
-  const displayPower = isMotorOn ? convertPower(powerWatts) : 0;
+  // 2. Tampilkan Power langsung dari data MQTT (bukan kalkulasi manual lagi)
+  // Kita konversi sesuai unit yang dipilih (watt/kw/hp)
+  const displayPower = isMotorOn ? convertPower(motorData.power) : 0;
 
   // 3. Helper Logic untuk menentukan warna status (Normal/Warning/Critical)
   const getAlarmLevel = (val: number, type: 'current' | 'voltage' | 'rpm') => {
@@ -48,7 +48,6 @@ const Dashboard = () => {
 
   // 4. Komponen Panel Status Sistem (Kanan Bawah)
   const renderSystemStatus = () => {
-    // KONDISI 1: Motor Mati
     if (!isMotorOn) {
       return (
         <div className="h-full flex flex-col items-center justify-center text-muted-foreground bg-secondary/20 rounded-lg border-2 border-dashed border-border">
@@ -61,7 +60,6 @@ const Dashboard = () => {
       );
     }
 
-    // KONDISI 2: Motor Nyala & Aman
     if (activeAlarms.length === 0) {
       return (
         <div className="h-full flex flex-col items-center justify-center bg-success/10 border border-success/30 rounded-lg animate-in fade-in">
@@ -74,7 +72,6 @@ const Dashboard = () => {
       );
     }
 
-    // KONDISI 3: Ada Masalah (Warning/Critical)
     return (
       <div className="h-full flex flex-col gap-3 overflow-y-auto pr-1">
         {activeAlarms.map((alarm) => (
@@ -88,11 +85,7 @@ const Dashboard = () => {
             )}
           >
             <div className="flex items-center gap-3 mb-1">
-              {alarm.level === 'critical' ? (
-                <AlertOctagon className="w-6 h-6" />
-              ) : (
-                <AlertTriangle className="w-6 h-6" />
-              )}
+              {alarm.level === 'critical' ? <AlertOctagon className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
               <span className="font-bold text-lg uppercase tracking-wider">
                 {alarm.level === 'critical' ? 'CRITICAL ERROR' : 'WARNING ALERT'}
               </span>
@@ -107,14 +100,13 @@ const Dashboard = () => {
   };
 
   return (
-    // CONTAINER UTAMA (Full Screen tanpa scroll window)
     <div className="h-full w-full flex flex-col gap-4 p-4 overflow-hidden animate-in fade-in duration-500">
 
       {/* --- TOP BAR: Indikator Live --- */}
       <div className="flex-none flex items-center justify-between bg-card/50 px-4 py-2 rounded-lg border border-border/50">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-primary animate-pulse" />
-          <span className="text-sm font-semibold">KIT 2-C Motor</span>
+          <span className="text-sm font-semibold">KIT 2-C Motor - Multi Topic Sync</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
@@ -131,52 +123,47 @@ const Dashboard = () => {
         {/* KOLOM KIRI: 4 Grafik (2x2) */}
         <div className="col-span-9 grid grid-cols-2 grid-rows-2 gap-4 h-full">
           
-          {/* Chart 1: Voltage */}
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
             <RealtimeChart
               title="Voltage"
               data={motorData.voltageHistory}
               unit="V"
               color="hsl(var(--chart-voltage))"
-              minValue={210} maxValue={230}
+              minValue={215} maxValue={230}
+              criticalThreshold={{high: 230}}
               alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')}
-              warningThreshold={{ low: 215,high: 225 }}
-              criticalThreshold={{low: 210, high: 230}}
             />
           </div>
 
-          {/* Chart 2: Current */}
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
             <RealtimeChart
               title="Current"
               data={motorData.currentHistory}
               unit="A"
               color="hsl(var(--chart-current))"
-              minValue={10} maxValue={30}
+              minValue={0} maxValue={2.5} criticalThreshold={{high: 2}}
               alarmLevel={getAlarmLevel(motorData.current, 'current')}
             />
           </div>
 
-          {/* Chart 3: Speed */}
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
             <RealtimeChart
               title="Speed"
-              data={motorData.rpmHistory}
+              data={motorData.rpmHistory.map(r => ({ time: r.time, value: convertSpeed(r.value) }))}
               unit={getSpeedUnitLabel()}
               color="hsl(var(--chart-rpm))"
-              minValue={1700} maxValue={1800}
+              minValue={0} criticalThreshold={{high: 20}} maxValue={25}
               alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')}
             />
           </div>
 
-          {/* Chart 4: Power */}
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
             <RealtimeChart
               title="Power"
               data={motorData.powerHistory.map(p => ({ time: p.time, value: convertPower(p.value) }))}
               unit={getPowerUnitLabel()}
               color="hsl(var(--chart-power))"
-              minValue={2500}
+              minValue={0}
             />
           </div>
         </div>
@@ -184,7 +171,6 @@ const Dashboard = () => {
         {/* KOLOM KANAN: Status Cards & Alarm Panel */}
         <div className="col-span-3 flex flex-col gap-4 h-full">
           
-          {/* Bagian Atas: Kartu Nilai Digital */}
           <div className="flex flex-col gap-3">
             <StatusCard
               title="Voltage" value={motorData.voltage} unit="V" icon={Zap} variant="voltage"
@@ -204,13 +190,11 @@ const Dashboard = () => {
             />
           </div>
 
-          {/* Bagian Bawah: Panel Kondisi Sistem (Mengisi sisa tinggi) */}
           <div className="flex-1 glass-card rounded-lg p-4 min-h-0 flex flex-col overflow-hidden">
             <h3 className="text-xs font-bold uppercase text-muted-foreground mb-3 tracking-widest border-b border-border/50 pb-2">
               System Condition
             </h3>
             <div className="flex-1 relative overflow-hidden">
-              {/* Wrapper absolute agar bisa scroll independent */}
               <div className="absolute inset-0 overflow-y-auto">
                 {renderSystemStatus()}
               </div>
