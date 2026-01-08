@@ -1,4 +1,4 @@
-import { useState } from "react"; // useState tetap butuh untuk 'loading' status UI
+import { useState } from "react";
 import MotorToggle from "@/components/MotorToggle";
 import UnitSelector from "@/components/UnitSelector";
 import { useMotorContext } from "@/contexts/MotorContext";
@@ -108,7 +108,8 @@ const Controller = () => {
                   variant={direction === "FWD" ? "default" : "outline"}
                   className={cn("h-12 text-md", direction === "FWD" && "bg-success hover:bg-success/80 text-white")}
                   onClick={() => sendCommand("SET_DIR", { value: "FWD" })}
-                  disabled={!isOperator || loading}
+                  disabled={!isOperator || loading || isMotorOn} // Tambahkan isMotorOn di sini
+                  title={isMotorOn ? "Stop motor to change direction" : ""}
                 >
                   <RotateCw className="mr-2 w-5 h-5" /> FORWARD
                 </Button>
@@ -117,11 +118,17 @@ const Controller = () => {
                   variant={direction === "REV" ? "default" : "outline"}
                   className={cn("h-12 text-md", direction === "REV" && "bg-warning hover:bg-warning/80 text-black")}
                   onClick={() => sendCommand("SET_DIR", { value: "REV" })}
-                  disabled={!isOperator || loading}
+                  disabled={!isOperator || loading || isMotorOn} // Tambahkan isMotorOn di sini
+                  title={isMotorOn ? "Stop motor to change direction" : ""}
                 >
                   <RotateCcw className="mr-2 w-5 h-5" /> REVERSE
                 </Button>
              </div>
+             {isMotorOn && (
+                <p className="text-xs text-muted-foreground mt-2 text-center">
+                   ⚠️ Stop the motor to change direction.
+                </p>
+             )}
           </div>
         </div>
 
