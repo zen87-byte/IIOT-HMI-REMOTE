@@ -4,7 +4,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import Index from "./pages/Index";
+import HMILayout from "./components/HMILayout";
+import DashboardPage from "./pages/DashboardPage";
+import MonitoringPage from "./pages/MonitoringPage";
+import ControllerPage from "./pages/ControllerPage";
+import AlarmPage from "./pages/AlarmPage";
+import PlantInfoPage from "./pages/PlantInfoPage";
+import SettingsPage from "./pages/SettingsPage";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -13,22 +19,22 @@ const queryClient = new QueryClient();
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
-  
+
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
-  
-  return <>{children}</>;
+
+  return <HMILayout>{children}</HMILayout>;
 }
 
 // Redirect authenticated users away from login
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
-  
+
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
   }
-  
+
   return <>{children}</>;
 }
 
@@ -46,7 +52,47 @@ const AppRoutes = () => (
       path="/"
       element={
         <ProtectedRoute>
-          <Index />
+          <DashboardPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/monitoring"
+      element={
+        <ProtectedRoute>
+          <MonitoringPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/controller"
+      element={
+        <ProtectedRoute>
+          <ControllerPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/alarm"
+      element={
+        <ProtectedRoute>
+          <AlarmPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/plant-info"
+      element={
+        <ProtectedRoute>
+          <PlantInfoPage />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/settings"
+      element={
+        <ProtectedRoute>
+          <SettingsPage />
         </ProtectedRoute>
       }
     />
