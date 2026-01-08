@@ -13,17 +13,18 @@ interface MotorToggleProps {
 const MotorToggle = ({ state, onStateChange, disabled = false }: MotorToggleProps) => {
   const [isAnimating, setIsAnimating] = useState(false);
 
-  const handleToggle = () => {
+  const handleToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (disabled) return;
     setIsAnimating(true);
-
-    // Cycle: STOP -> FORWARD -> REVERSE -> STOP
-    let nextState: MotorState = "STOP";
-    if (state === "STOP") nextState = "FORWARD";
-    else if (state === "FORWARD") nextState = "REVERSE";
-    else nextState = "STOP";
-
-    onStateChange(nextState);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const half = rect.width / 2;
+    const tolerance = rect.width * 0.1; // 10% of width as middle zone
+    let newState: MotorState = "STOP";
+    if (clickX < half - tolerance) newState = "FORWARD"; // left side
+    else if (clickX > half + tolerance) newState = "REVERSE"; // right side
+    // else remains STOP for middle click
+    onStateChange(newState);
   };
 
   useEffect(() => {
