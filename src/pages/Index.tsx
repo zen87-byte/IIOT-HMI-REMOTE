@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Zap, Activity, Gauge, Settings, Bell, LogOut, Bolt } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import MotorToggle from "@/components/MotorToggle";
+import MotorToggle, { MotorState } from "@/components/MotorToggle";
 import StatusCard from "@/components/StatusCard";
 import RealtimeChart from "@/components/RealtimeChart";
 // IMPORT TYPE DARI SINI
@@ -28,8 +28,9 @@ interface HistoryEntry {
 const Index = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [isMotorOn, setIsMotorOn] = useState(false);
-  
+  const [motorState, setMotorState] = useState<MotorState>("STOP");
+  const isMotorOn = motorState !== "STOP";
+
   // 1. UBAH DEFAULT JADI "live"
   const [timeRange, setTimeRange] = useState<TimeRange>("live");
 
@@ -59,7 +60,7 @@ const Index = () => {
     motorData.voltage,
     isMotorOn
   );
-  
+
   const {
     speedUnit, setSpeedUnit, convertSpeed, getSpeedUnitLabel,
     powerUnit, setPowerUnit, convertPower, getPowerUnitLabel,
@@ -101,7 +102,7 @@ const Index = () => {
     }
   }, [activeAlarms]);
 
-  const handleMotorToggle = (newState: boolean) => {
+  const handleMotorToggle = (newState: MotorState) => {
     if (!isOperator) {
       toast.error("Access Denied", {
         description: "Only operators can control the motor",
@@ -109,7 +110,9 @@ const Index = () => {
       return;
     }
 
-    setIsMotorOn(newState);
+    setMotorState(newState);
+
+    const isRunning = newState !== "STOP";
 
     const entry: HistoryEntry = {
       id: `event-${Date.now()}`,
@@ -118,14 +121,14 @@ const Index = () => {
         minute: "2-digit",
         hour12: false,
       }),
-      event: newState ? "start" : "stop",
-      description: newState ? "Motor started - Operator initiated" : "Motor stopped - Operator initiated",
+      event: isRunning ? "start" : "stop",
+      description: isRunning ? `Motor started (${newState}) - Operator initiated` : "Motor stopped - Operator initiated",
     };
     setHistoryEntries((prev) => [entry, ...prev].slice(0, 50));
 
-    toast(newState ? "Motor Started" : "Motor Stopped", {
-      description: newState
-        ? "The AC motor is now running"
+    toast(isRunning ? "Motor Started" : "Motor Stopped", {
+      description: isRunning
+        ? `The AC motor is now running in ${newState} mode`
         : "The AC motor has been stopped",
     });
   };
@@ -230,8 +233,8 @@ const Index = () => {
                 </p>
               )}
               <MotorToggle
-                isOn={isMotorOn}
-                onToggle={handleMotorToggle}
+                state={motorState}
+                onStateChange={handleMotorToggle}
                 disabled={!isOperator}
               />
 
