@@ -12,7 +12,7 @@ interface StatusCardProps {
   variant?: "default" | "voltage" | "current" | "rpm" | "power";
   alarmLevel?: AlarmLevel;
   className?: string;
-  range?: { min: number; max: number }; // Tambahan: Range untuk Progress Bar
+  range?: { min: number; max: number };
 }
 
 const StatusCard = ({

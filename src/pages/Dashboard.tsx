@@ -6,13 +6,12 @@ import { useUnitConversion } from "@/hooks/useUnitConversion";
 import { cn } from "@/lib/utils";
 
 const Dashboard = () => {
-  // Ambil data real-time dari Context
-  const { isMotorOn, motorData, thresholds, activeAlarms } = useMotorContext();
+  // --- PERBAIKAN: Ganti isMotorOn jadi isMotorRunning ---
+  const { isMotorRunning, motorData, thresholds, activeAlarms } = useMotorContext();
   
-  // Ambil helper konversi unit
   const { convertSpeed, getSpeedUnitLabel, convertPower, getPowerUnitLabel } = useUnitConversion();
 
-  // 1. SAFETY CHECK: Cegah Blank Screen jika data belum siap
+  // 1. SAFETY CHECK
   if (!motorData || !motorData.voltageHistory) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -24,13 +23,12 @@ const Dashboard = () => {
     );
   }
 
-  // 2. Tampilkan Power langsung dari data MQTT (bukan kalkulasi manual lagi)
-  // Kita konversi sesuai unit yang dipilih (watt/kw/hp)
-  const displayPower = isMotorOn ? convertPower(motorData.power) : 0;
+  // 2. DISPLAY POWER
+  const displayPower = isMotorRunning ? convertPower(motorData.power) : 0;
 
-  // 3. Helper Logic untuk menentukan warna status (Normal/Warning/Critical)
+  // 3. ALARM LEVEL LOGIC
   const getAlarmLevel = (val: number, type: 'current' | 'voltage' | 'rpm') => {
-    if (!isMotorOn) return "normal";
+    if (!isMotorRunning) return "normal"; // Ubah disini juga
     const t = thresholds[type];
 
     if (type === 'voltage') {
@@ -46,9 +44,9 @@ const Dashboard = () => {
     return "normal";
   };
 
-  // 4. Komponen Panel Status Sistem (Kanan Bawah)
+  // 4. SYSTEM STATUS RENDER
   const renderSystemStatus = () => {
-    if (!isMotorOn) {
+    if (!isMotorRunning) { // Ubah disini juga
       return (
         <div className="h-full flex flex-col items-center justify-center text-muted-foreground bg-secondary/20 rounded-lg border-2 border-dashed border-border">
           <div className="p-4 bg-secondary rounded-full mb-3">
@@ -101,8 +99,7 @@ const Dashboard = () => {
 
   return (
     <div className="h-full w-full flex flex-col gap-4 p-4 overflow-hidden animate-in fade-in duration-500">
-
-      {/* --- TOP BAR: Indikator Live --- */}
+      {/* Top Bar */}
       <div className="flex-none flex items-center justify-between bg-card/50 px-4 py-2 rounded-lg border border-border/50">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-primary animate-pulse" />
@@ -117,77 +114,30 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* --- MAIN CONTENT GRID --- */}
       <div className="flex-1 min-h-0 grid grid-cols-12 gap-4">
-
-        {/* KOLOM KIRI: 4 Grafik (2x2) */}
+        {/* Grafik */}
         <div className="col-span-9 grid grid-cols-2 grid-rows-2 gap-4 h-full">
-          
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
-            <RealtimeChart
-              title="Voltage"
-              data={motorData.voltageHistory}
-              unit="V"
-              color="hsl(var(--chart-voltage))"
-              minValue={215} maxValue={230}
-              criticalThreshold={{high: 230}}
-              alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')}
-            />
+            <RealtimeChart title="Voltage" data={motorData.voltageHistory} unit="V" color="hsl(var(--chart-voltage))" minValue={215} maxValue={230} criticalThreshold={{high: 230}} alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')} />
           </div>
-
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
-            <RealtimeChart
-              title="Current"
-              data={motorData.currentHistory}
-              unit="A"
-              color="hsl(var(--chart-current))"
-              minValue={0} maxValue={2.5} criticalThreshold={{high: 2}}
-              alarmLevel={getAlarmLevel(motorData.current, 'current')}
-            />
+            <RealtimeChart title="Current" data={motorData.currentHistory} unit="A" color="hsl(var(--chart-current))" minValue={0} maxValue={2.5} criticalThreshold={{high: 2}} alarmLevel={getAlarmLevel(motorData.current, 'current')} />
           </div>
-
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
-            <RealtimeChart
-              title="Speed"
-              data={motorData.rpmHistory.map(r => ({ time: r.time, value: convertSpeed(r.value) }))}
-              unit={getSpeedUnitLabel()}
-              color="hsl(var(--chart-rpm))"
-              minValue={0} criticalThreshold={{high: 20}} maxValue={25}
-              alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')}
-            />
+            <RealtimeChart title="Speed" data={motorData.rpmHistory.map(r => ({ time: r.time, value: convertSpeed(r.value) }))} unit={getSpeedUnitLabel()} color="hsl(var(--chart-rpm))" minValue={0} criticalThreshold={{high: 20}} maxValue={25} alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')} />
           </div>
-
           <div className="glass-card rounded-lg p-3 min-h-0 overflow-hidden flex flex-col">
-            <RealtimeChart
-              title="Power"
-              data={motorData.powerHistory.map(p => ({ time: p.time, value: convertPower(p.value) }))}
-              unit={getPowerUnitLabel()}
-              color="hsl(var(--chart-power))"
-              minValue={0}
-            />
+            <RealtimeChart title="Power" data={motorData.powerHistory.map(p => ({ time: p.time, value: convertPower(p.value) }))} unit={getPowerUnitLabel()} color="hsl(var(--chart-power))" minValue={0} />
           </div>
         </div>
 
-        {/* KOLOM KANAN: Status Cards & Alarm Panel */}
+        {/* Panel Kanan */}
         <div className="col-span-3 flex flex-col gap-4 h-full">
-          
           <div className="flex flex-col gap-3">
-            <StatusCard
-              title="Voltage" value={motorData.voltage} unit="V" icon={Zap} variant="voltage"
-              alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')} className="py-3"
-            />
-            <StatusCard
-              title="Current" value={motorData.current} unit="A" icon={Activity} variant="current"
-              alarmLevel={getAlarmLevel(motorData.current, 'current')} className="py-3"
-            />
-            <StatusCard
-              title="Speed" value={convertSpeed(motorData.rpm)} unit={getSpeedUnitLabel()} icon={Gauge} variant="rpm"
-              alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')} className="py-3"
-            />
-            <StatusCard
-              title="Power" value={displayPower} unit={getPowerUnitLabel()} icon={Bolt} variant="power"
-              className="py-3"
-            />
+            <StatusCard title="Voltage" value={motorData.voltage} unit="V" icon={Zap} variant="voltage" alarmLevel={getAlarmLevel(motorData.voltage, 'voltage')} className="py-3" />
+            <StatusCard title="Current" value={motorData.current} unit="A" icon={Activity} variant="current" alarmLevel={getAlarmLevel(motorData.current, 'current')} className="py-3" />
+            <StatusCard title="Speed" value={convertSpeed(motorData.rpm)} unit={getSpeedUnitLabel()} icon={Gauge} variant="rpm" alarmLevel={getAlarmLevel(motorData.rpm, 'rpm')} className="py-3" />
+            <StatusCard title="Power" value={displayPower} unit={getPowerUnitLabel()} icon={Bolt} variant="power" className="py-3" />
           </div>
 
           <div className="flex-1 glass-card rounded-lg p-4 min-h-0 flex flex-col overflow-hidden">
@@ -201,7 +151,6 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

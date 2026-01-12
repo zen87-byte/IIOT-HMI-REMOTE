@@ -37,8 +37,6 @@ const App = () => (
                 
                 {/* PERBAIKAN DI SINI: */}
                 <Route path="monitoring" element={<Monitoring />} /> 
-                
-                <Route path="controller" element={<Controller />} />
                 <Route path="alarm" element={<Alarm />} />
               </Route>
 

@@ -19,9 +19,9 @@ interface AlarmThresholds {
 }
 
 const DEFAULT_THRESHOLDS: AlarmThresholds = {
-  current: { warning: 17, critical: 20 },
-  rpm: { warningLow: 1650, warningHigh: 1850, criticalLow: 1600, criticalHigh: 1900 },
-  voltage: { warningLow: 210, warningHigh: 230, criticalLow: 205, criticalHigh: 235 },
+  current: { warning: 1.9, critical: 2 },
+  rpm: { warningLow: 1, warningHigh: 19, criticalLow: 0, criticalHigh: 20 },
+  voltage: { warningLow: 210, warningHigh: 225, criticalLow: 0, criticalHigh: 230 },
 };
 
 // Delay before alarms activate after motor start (steady state)

@@ -8,17 +8,12 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MQTT_BROKER = process.env.MQTT_URL || "mqtt://localhost:1883";
 
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST"],
-  })
-);
-
+app.use(cors({ origin: "*", methods: ["GET", "POST"] }));
 app.use(express.json());
 
-// --- Database Setup ---
+// --- Database Connection ---
 const pool = new Pool({
   host: process.env.POSTGRES_HOST,
   port: Number(process.env.POSTGRES_PORT),
@@ -36,7 +31,6 @@ const initDB = async () => {
         voltage NUMERIC,
         current NUMERIC,
         power NUMERIC,
-        temperature NUMERIC,
         timestamp TIMESTAMP DEFAULT NOW()
       );
     `);
@@ -51,100 +45,81 @@ const initDB = async () => {
         source VARCHAR(50) DEFAULT 'SYSTEM'
       );
     `);
-    console.log("✅ Database tables ready");
+    console.log("Database tables ready");
   } catch (err) {
-    console.error("❌ Init DB Error:", err);
+    console.error("Init DB Error:", err);
   }
 };
 initDB();
 
-// --- Authentication Endpoints ---
-app.post("/api/auth/login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === "operator" && password === "operator123") {
-    return res.json({
-      success: true,
-      user: {
-        id: 1,
-        username: "operator",
-        role: "operator",
-        name: "Operator Produksi",
-      },
-      token: "dummy-token-12345",
-    });
-  }
-  res.status(401).json({ error: "Invalid username or password" });
-});
+// --- In-Memory State (Read Only) ---
+// Digunakan untuk endpoint /state agar frontend mendapat status terakhir saat refresh
+let monitoredState = {
+  status: "OFF", 
+  direction: "FWD"
+};
 
-app.get("/api/auth/me", (req, res) => {
-  res.json({
-    id: 1,
-    username: "operator",
-    role: "operator",
-    name: "Operator Produksi",
-  });
-});
-
-// ==========================================
-// 📡 MQTT LOGIC (MULTI-TOPIC SENSORS)
-// ==========================================
-
-let currentStats = {
+let sensorSnapshot = {
   rpm: 0,
   voltage: 0,
   current: 0,
-  power: 0,
-  temperature: 0,
+  power: 0
 };
 
-const mqttClient = mqtt.connect(
-  process.env.MQTT_URL || "mqtt://localhost:1883"
-);
+// --- MQTT Setup ---
+const mqttClient = mqtt.connect(MQTT_BROKER);
 
 mqttClient.on("connect", () => {
-  console.log("✅ MQTT Connected to Broker");
+  console.log("Connected to MQTT Broker");
   mqttClient.subscribe([
-    "pm/tegangan",
-    "pm/arus",
-    "vsd/actualspeed",
+    "pm/tegangan", 
+    "pm/arus", 
+    "vsd/actualspeed", 
     "pm/power",
+    "vsd/mode/status", 
+    "motor/stats"
   ]);
 });
 
 mqttClient.on("message", async (topic, message) => {
   try {
     const rawData = JSON.parse(message.toString());
-    const parseValue = (val: any) => (Array.isArray(val) ? val[0] : val || 0);
+    const parseVal = (val: any) => (Array.isArray(val) ? val[0] : val || 0);
 
-    if (topic === "pm/tegangan")
-      currentStats.voltage = parseValue(rawData.tegangan);
-    else if (topic === "pm/arus")
-      currentStats.current = parseValue(rawData.arus);
-    else if (topic === "vsd/actualspeeds")
-      currentStats.rpm = parseValue(rawData.rpm);
-    else if (topic === "pm/power")
-      currentStats.power = parseValue(rawData.power) * 1000; // Normalisasi kW ke Watt
+    // 1. Handle Sensor Data
+    if (topic.startsWith("pm/") || topic === "vsd/actualspeed") {
+      if (topic === "pm/tegangan") sensorSnapshot.voltage = Number(parseVal(rawData.tegangan));
+      if (topic === "pm/arus") sensorSnapshot.current = Number(parseVal(rawData.arus));
+      if (topic === "vsd/actualspeed") sensorSnapshot.rpm = Number(parseVal(rawData.actualspeed));
+      if (topic === "pm/power") sensorSnapshot.power = Number(parseVal(rawData.power)) * 1000;
 
-    await pool.query(
-      `INSERT INTO motor_data (rpm, voltage, current, power, temperature, timestamp) 
-       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [
-        currentStats.rpm,
-        currentStats.voltage,
-        currentStats.current,
-        currentStats.power,
-        currentStats.temperature,
-      ]
-    );
+      await pool.query(
+        `INSERT INTO motor_data (rpm, voltage, current, power, timestamp) VALUES ($1, $2, $3, $4, NOW())`,
+        [sensorSnapshot.rpm, sensorSnapshot.voltage, sensorSnapshot.current, sensorSnapshot.power]
+      );
 
-    detectAlarms(currentStats);
+      detectAlarms(sensorSnapshot);
+    }
+
+    // 2. Handle Machine Status (Feedback only)
+    if (topic === "vsd/mode/status") {
+      if (rawData.mode === 1) monitoredState.status = "AUTO";
+      else if (rawData.mode === 2) monitoredState.status = "MANUAL";
+      else if (rawData.off === 1) monitoredState.status = "OFF";
+    }
+    
+    if (topic === "motor/stats" && rawData.direction !== undefined) {
+      monitoredState.direction = rawData.direction === 1 ? "FWD" : "REV";
+    }
+
   } catch (err) {
-    console.error("MQTT Processing Error:", err);
+    console.error(`MQTT Processing Error [${topic}]:`, err);
   }
 });
 
 const detectAlarms = async (data: any) => {
   const insertAlarm = async (level: string, msg: string) => {
+    // Debounce: Prevent duplicate alarms within 10 seconds
     const check = await pool.query(
       `SELECT id FROM alarm_logs WHERE message = $1 AND timestamp > NOW() - INTERVAL '10 seconds'`,
       [msg]
@@ -157,103 +132,73 @@ const detectAlarms = async (data: any) => {
     }
   };
 
-  if (data.current > 15 && data.current <= 20)
-    await insertAlarm("warning", "High Current Warning");
-  if (data.current > 20) await insertAlarm("critical", "Critical Overcurrent");
-  if (data.voltage > 240) await insertAlarm("critical", "Overvoltage");
-  if (data.voltage < 180) await insertAlarm("warning", "Undervoltage");
-  if (data.rpm > 1800) await insertAlarm("warning", "Overspeed Warning");
+  // Logic threshold sesuai dashboard
+  if (data.voltage > 230) await insertAlarm("critical", `Overvoltage: ${data.voltage.toFixed(1)}V`);
+  if (data.voltage < 210 && data.voltage > 10) await insertAlarm("critical", `Undervoltage: ${data.voltage.toFixed(1)}V`);
+  
+  if (data.current > 2.0) await insertAlarm("critical", `Overcurrent: ${data.current.toFixed(2)}A`);
+  else if (data.current > 1.5) await insertAlarm("warning", `High Current: ${data.current.toFixed(2)}A`);
+
+  if (data.rpm > 22) await insertAlarm("critical", `Overspeed Critical: ${data.rpm.toFixed(1)} RPM`);
+  else if (data.rpm > 20) await insertAlarm("warning", `Overspeed Warning: ${data.rpm.toFixed(1)} RPM`);
 };
 
-// ==========================================
-// 🎮 API CONTROL ENDPOINT (VSD & HMI SYNC)
-// ==========================================
-app.post("/api/control", (req, res) => {
-  const { action, value, speedValue, kp, ki, kd } = req.body;
+// --- Endpoints ---
 
-  // 1. KOMUNIKASI KE HMI/PLC (Topik Spesifik)
-  if (action === "START") {
-    if (value === "AUTO") {
-      mqttClient.publish("vsd/mode/autos", JSON.stringify({ mode: 1 }), {
-        qos: 1,
-      });
-    } else {
-      mqttClient.publish("vsd/mode/manuals", JSON.stringify({ mode: 1 }), {
-        qos: 1,
-      });
-      mqttClient.publish(
-        "motor/inputspeeds",
-        JSON.stringify({ speed: Number(speedValue) }),
-        { qos: 1 }
-      );
-    }
-  } else if (action === "STOP") {
-    mqttClient.publish("vsd/mode/offs", JSON.stringify({ off: 1 }), { qos: 1 });
-    // Reset bit mode lainnya agar tidak bentrok di PLC
-    mqttClient.publish("vsd/mode/autos", JSON.stringify({ mode: 0 }));
-    mqttClient.publish("vsd/mode/manuals", JSON.stringify({ mode: 0 }));
-  } else if (action === "SET_PID") {
-    mqttClient.publish(
-      "motor/control",
-      JSON.stringify({ command: "SET_PID", kp, ki, kd })
-    );
-  } else if (action === "SET_SPEED_SP") {
-    // Jika hanya ganti setpoint tanpa ganti status START
-    mqttClient.publish(
-      "motor/inputspeeds",
-      JSON.stringify({ speed: Number(value) }),
-      { qos: 1 }
-    );
-  } else if (action === "SET_DIR") {
-    // Menentukan nilai mentah untuk dikirim ke PLC via MQTT motor/stats
-    // Contoh: FWD = 1, REV = 2
-    const dirValue = value === "FWD" ? 1 : 2;
-
-    mqttClient.publish("motor/stats", JSON.stringify({ direction: dirValue }), {
-      qos: 1,
+// Auth
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  if (username === "operator" && password === "operator123") {
+    return res.json({
+      success: true,
+      user: { id: 1, username: "operator", role: "operator", name: "Operator Produksi" },
+      token: "session-token-123",
     });
-    console.log(`📡 Direction Updated: ${value} (${dirValue}) to motor/stats`);
   }
-
-  // 2. BROADCAST SINKRONISASI KE SEMUA WEB CLIENT
-  // Ini yang membuat tombol di laptop lain berubah warna/status
-  const syncPayload = {
-    command: action,
-    value: value,
-    speed: speedValue || value,
-    kp,
-    ki,
-    kd,
-  };
-  mqttClient.publish("motor/control", JSON.stringify(syncPayload));
-
-  console.log(`📡 Broadcast Sync: ${action} | Mode: ${value}`);
-  res.json({ success: true });
+  res.status(401).json({ error: "Invalid credentials" });
 });
 
-// --- Data Fetching Endpoints ---
+app.get("/api/auth/me", (req, res) => {
+  res.json({ id: 1, username: "operator", role: "operator", name: "Operator Produksi" });
+});
+
+// State (Read Only) - Agar frontend tidak error saat fetch initial state
+app.get("/api/control/state", (req, res) => {
+  res.json(monitoredState);
+});
+
+// Data Logs
 app.get("/api/motor", async (req, res) => {
   try {
     const { range } = req.query;
-    let timeInterval = "INTERVAL '1 hour'";
-    if (range === "30m") timeInterval = "INTERVAL '30 minutes'";
-    else if (range === "6h") timeInterval = "INTERVAL '6 hours'";
-    else if (range === "24h") timeInterval = "INTERVAL '24 hours'";
 
+    let interval = "INTERVAL '1 hour'"; 
+
+    switch (range) {
+      case "30m": interval = "INTERVAL '30 minutes'"; break;
+      case "1h":  interval = "INTERVAL '1 hour'"; break;
+      case "6h":  interval = "INTERVAL '6 hours'"; break;
+      case "12h": interval = "INTERVAL '12 hours'"; break;
+      case "24h": interval = "INTERVAL '24 hours'"; break;
+      case "7d":  interval = "INTERVAL '7 days'"; break;
+      case "30d": interval = "INTERVAL '30 days'"; break;
+      default:    interval = "INTERVAL '1 hour'"; break;
+    }
+    
     const result = await pool.query(
-      `SELECT * FROM motor_data WHERE timestamp > NOW() - ${timeInterval} ORDER BY timestamp ASC`
+      `SELECT * FROM motor_data WHERE timestamp > NOW() - ${interval} ORDER BY timestamp ASC`
     );
+    
     res.json(result.rows);
   } catch (err: any) {
+    console.error("Fetch Data Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/alarms", async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT * FROM alarm_logs ORDER BY timestamp DESC LIMIT 50`
-    );
+    const result = await pool.query(`SELECT * FROM alarm_logs ORDER BY timestamp DESC LIMIT 50`);
     res.json(result.rows);
   } catch (err: any) {
     res.status(500).json({ error: "Database Error" });
@@ -261,5 +206,5 @@ app.get("/api/alarms", async (req, res) => {
 });
 
 app.listen(Number(PORT), "0.0.0.0", () => {
-  console.log(`🚀 Server Ready on Port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });

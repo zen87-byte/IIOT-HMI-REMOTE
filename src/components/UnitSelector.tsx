@@ -43,7 +43,7 @@ const UnitSelector = (props: UnitSelectorProps) => {
             value === unit.value
               ? "bg-primary text-primary-foreground"
               : "text-muted-foreground hover:text-foreground"
-          )}a
+          )}
           aria-pressed={value === unit.value}
         >
           {unit.label}

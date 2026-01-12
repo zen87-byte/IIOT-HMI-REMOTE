@@ -15,7 +15,6 @@ const Layout = () => {
   const navItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
     { name: "Monitoring", path: "/monitoring", icon: Activity },
-    { name: "Controller", path: "/controller", icon: Settings },
     { name: "Alarm", path: "/alarm", icon: Bell },
   ];
 
